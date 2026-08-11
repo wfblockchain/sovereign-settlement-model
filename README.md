@@ -127,6 +127,41 @@ flowchart LR
 One atomic operation: the customer sees an instant payment, no interbank claim
 outlives the transaction, and par between the banks' tokens holds by mechanism.
 
+## Cross-currency: PvP and the residual auction
+
+The same mechanics extend across currencies. Two findings, both pinned by
+tests:
+
+**Gross PvP needs zero new code.** A second currency's settlement token is a
+plain `IERC20`, so it rides `AtomicDvP`'s asset leg unchanged: both cash legs
+settle in one transaction or neither (Herstatt risk is unconstructable, not
+managed), and *both* jurisdictions' admission gates, freezes and accrual sync
+run on their own legs — a cross-border payment passes both regulators' controls
+atomically or does not move.
+
+**Conversion pricing is `FxBatchAuction`.** Cross-currency flows should be
+netted and crossed at a reference mid first; only the residual imbalance needs
+a market. The auction sells that residual under three commitments:
+
+- **The operator is auctioneer, never principal** — the contract quotes
+  nothing and holds no inventory; it cannot lose money on markets, which is
+  what keeps the utility credit-neutral.
+- **Sealed bids, because the ledger is shared** — a visible bid is a free
+  option to everyone else, so bids commit as hashes and reveal after the
+  window closes; unrevealed bids lapse.
+- **The operator proposes, the chain verifies** — `settleBatch` takes the
+  operator's fill order but requires a complete, rate-sorted permutation of
+  every revealed bid (the `settleCycle` trust split, transplanted), then fills
+  greedily and clears **every winner at the marginal accepted rate**. Uniform
+  pricing removes the incentive to shade and the reward for speed; a batch has
+  no queue. Firm quotes need no last-look — a winning reveal settles
+  atomically in the same transaction.
+
+Because each currency's pool runs its own accrual index at its own
+policy-proximate rate, the index differential is the forward points — covered
+interest parity by arithmetic — and an FX swap decomposes into a spot PvP plus
+a scheduled reverse PvP, with the indices carrying the carry in between.
+
 ## Measured, not asserted
 
 `go run ./cmd/clearing-operator` reproduces the economics (20 participants,
@@ -179,7 +214,8 @@ flowchart TB
 | `contracts/src/SettlementToken.sol` | Par token, ERC-7943 (uRWA) gate/freeze/force, accrual index, key-loss recovery |
 | `contracts/src/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
 | `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash: both legs in one transaction, or neither |
-| `contracts/test/` | 22 Foundry tests pinning the invariants, incl. two audit regressions |
+| `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
+| `contracts/test/` | 30 Foundry tests pinning the invariants, incl. two audit regressions and the two-token PvP lane |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
@@ -239,6 +275,14 @@ atomicity should name the trust assumption it stands on.
 - Accrual is one-directional (no negative rates, no on-chain fees), and any
   contract that holds balances across time accrues yield to itself — forward
   entitlement or keep custody transient.
+- **The auction batch is only as strong as its weakest winner**: a revealed
+  bidder whose balance no longer covers its fill reverts the whole
+  `settleBatch` — atomicity kept honest at the price of a stall. Production
+  wants bid bonds posted at commitment.
+- **The reference mid is a governance problem, not a contract**: crossing at
+  mid (upstream of the auction) needs a rate source with the same
+  "verified, not trusted" treatment as the optimiser — e.g. a bounded median
+  of member submissions — which this repo does not implement.
 - **A 24×7 token redeems into banking-hours money**: `defund` promises fiat and
   Fedwire closes. Redemption windows or an intraday facility are a policy
   choice the contracts do not make.
