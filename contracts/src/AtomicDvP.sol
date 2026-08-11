@@ -26,6 +26,15 @@ import { SettlementToken } from "./SettlementToken.sol";
  *      point atomicity holds only under an assumption about the messaging layer,
  *      and should be claimed with that qualification attached.
  *
+ *      TWO CANCELLATION REGIMES. Until the buyer acts, {propose} is an offer,
+ *      and an offer nobody has taken is not an obligation: either party may
+ *      withdraw it unilaterally. Once the buyer {bind}s, the trade IS an
+ *      obligation — a matched trade awaiting settlement — and it cancels only
+ *      bilaterally (one party requests, the other consents) or lapses at
+ *      expiry. {accept} remains the immediacy lane: bind and settle in one
+ *      call. Without the bound state, a seller could cancel in front of the
+ *      buyer's acceptance, which makes matched-trade settlement impossible.
+ *
  *      THE ASSET LEG IS DELIBERATELY `IERC20`. Tokenized securities have
  *      concentrated on ERC-3643, which enforces identity and compliance inside
  *      `transfer`. That is a feature here: if the buyer is not eligible to hold
@@ -39,6 +48,7 @@ contract AtomicDvP {
     enum Status {
         None,
         Proposed,
+        Bound,
         Settled,
         Cancelled
     }
@@ -51,6 +61,7 @@ contract AtomicDvP {
         uint128 cashAmount;
         uint64 expiry;
         Status status;
+        address cancelRequestedBy;
     }
 
     SettlementToken public immutable CASH;
@@ -66,13 +77,17 @@ contract AtomicDvP {
         uint128 cashAmount,
         uint64 expiry
     );
+    event TradeBound(bytes32 indexed tradeId);
     event TradeSettled(bytes32 indexed tradeId, uint256 securityAmount, uint128 cashAmount);
+    event CancelRequested(bytes32 indexed tradeId, address indexed by);
     event TradeCancelled(bytes32 indexed tradeId);
 
     error DuplicateTrade(bytes32 tradeId);
     error NotProposed(bytes32 tradeId, Status status);
     error NotTheBuyer(bytes32 tradeId, address caller);
     error NotAParty(bytes32 tradeId, address caller);
+    error NotBound(bytes32 tradeId, Status status);
+    error CancelAlreadyRequested(bytes32 tradeId, address by);
     error Expired(uint64 expiry);
     error ZeroAmount();
 
@@ -103,7 +118,8 @@ contract AtomicDvP {
             securityAmount: securityAmount,
             cashAmount: cashAmount,
             expiry: expiry,
-            status: Status.Proposed
+            status: Status.Proposed,
+            cancelRequestedBy: address(0)
         });
         emit TradeProposed(
             tradeId, msg.sender, buyer, address(security), securityAmount, cashAmount, expiry
@@ -124,6 +140,34 @@ contract AtomicDvP {
         Trade storage t = trades[tradeId];
         require(t.status == Status.Proposed, NotProposed(tradeId, t.status));
         require(msg.sender == t.buyer, NotTheBuyer(tradeId, msg.sender));
+        _settle(tradeId, t);
+    }
+
+    /// @notice Buyer binds the offer into a mutual obligation — a matched
+    ///         trade awaiting settlement. No value moves.
+    function bind(bytes32 tradeId) external {
+        Trade storage t = trades[tradeId];
+        require(t.status == Status.Proposed, NotProposed(tradeId, t.status));
+        require(msg.sender == t.buyer, NotTheBuyer(tradeId, msg.sender));
+        require(block.timestamp <= t.expiry, Expired(t.expiry));
+        t.status = Status.Bound;
+        emit TradeBound(tradeId);
+    }
+
+    /// @notice Settles a bound trade — either party may trigger; both already
+    ///         consented at {bind}. A pending cancellation request does not
+    ///         block settlement: a unilateral request must never work as a
+    ///         unilateral cancellation with extra steps.
+    function settle(bytes32 tradeId) external {
+        Trade storage t = trades[tradeId];
+        require(t.status == Status.Bound, NotBound(tradeId, t.status));
+        require(msg.sender == t.seller || msg.sender == t.buyer, NotAParty(tradeId, msg.sender));
+        _settle(tradeId, t);
+    }
+
+    /// @dev State is written BEFORE the transfers so a reentrant call through a
+    ///      hostile security token finds the trade already settled.
+    function _settle(bytes32 tradeId, Trade storage t) internal {
         require(block.timestamp <= t.expiry, Expired(t.expiry));
 
         t.status = Status.Settled;
@@ -134,12 +178,35 @@ contract AtomicDvP {
         emit TradeSettled(tradeId, t.securityAmount, t.cashAmount);
     }
 
-    /// @notice Withdraws an unsettled trade. Either party, any time before
-    ///         settlement — an offer nobody has taken is not an obligation.
+    /// @notice Cancellation, in two regimes.
+    ///         Proposed: either party, unilaterally — an offer nobody has taken
+    ///         is not an obligation. Bound: one party requests, the OTHER must
+    ///         consent — a bound trade is exactly an obligation; after expiry a
+    ///         bound trade has lapsed and either party may abandon it alone.
     function cancel(bytes32 tradeId) external {
         Trade storage t = trades[tradeId];
-        require(t.status == Status.Proposed, NotProposed(tradeId, t.status));
         require(msg.sender == t.seller || msg.sender == t.buyer, NotAParty(tradeId, msg.sender));
+
+        if (t.status == Status.Proposed) {
+            t.status = Status.Cancelled;
+            emit TradeCancelled(tradeId);
+            return;
+        }
+
+        require(t.status == Status.Bound, NotBound(tradeId, t.status));
+
+        if (block.timestamp > t.expiry) {
+            t.status = Status.Cancelled;
+            emit TradeCancelled(tradeId);
+            return;
+        }
+
+        if (t.cancelRequestedBy == address(0)) {
+            t.cancelRequestedBy = msg.sender;
+            emit CancelRequested(tradeId, msg.sender);
+            return;
+        }
+        require(t.cancelRequestedBy != msg.sender, CancelAlreadyRequested(tradeId, msg.sender));
         t.status = Status.Cancelled;
         emit TradeCancelled(tradeId);
     }

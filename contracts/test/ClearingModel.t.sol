@@ -381,6 +381,106 @@ contract ClearingModelTest is Test {
         assertEq(security.balanceOf(bankB), 0);
     }
 
+    /// @dev Sets up a proposed trade T1: bankA sells 10 units vs 1000 cash to bankB.
+    function _proposeT1() internal {
+        _fund(bankB, 1000);
+        security.mint(bankA, 10);
+        vm.prank(bankA);
+        security.approve(address(dvp), 10);
+        vm.prank(bankA);
+        dvp.propose("T1", bankB, IERC20(address(security)), 10, uint128(1000 * M), uint64(block.timestamp + 1 hours));
+    }
+
+    function _status(bytes32 id) internal view returns (AtomicDvP.Status st) {
+        (,,,,,, st,) = dvp.trades(id);
+    }
+
+    /// An offer nobody has taken is not an obligation: unilateral withdrawal stands.
+    function test_AnUntakenOfferRemainsUnilaterallyRevocable() public {
+        _proposeT1();
+        vm.prank(bankA);
+        dvp.cancel("T1");
+        assertTrue(_status("T1") == AtomicDvP.Status.Cancelled);
+    }
+
+    /// The matched-trade regime: once bound, either party can trigger settlement.
+    function test_ABoundTradeSettlesOnEitherPartysTrigger() public {
+        _proposeT1();
+        vm.prank(bankB);
+        dvp.bind("T1");
+        vm.prank(bankA); // the SELLER settles — consent was given at bind
+        dvp.settle("T1");
+        assertEq(security.balanceOf(bankB), 10);
+        assertEq(cash.balanceOf(bankA), 1000 * M);
+    }
+
+    /// The finding this regime exists to close: a seller must NOT be able to
+    /// cancel in front of settlement once the trade is matched.
+    function test_ABoundTradeCannotBeCancelledUnilaterally() public {
+        _proposeT1();
+        vm.prank(bankB);
+        dvp.bind("T1");
+
+        vm.prank(bankA);
+        dvp.cancel("T1"); // records a request, cancels nothing
+        assertTrue(_status("T1") == AtomicDvP.Status.Bound, "unilateral cancel must not stand");
+
+        vm.prank(bankA); // asking twice is still one party
+        vm.expectRevert(abi.encodeWithSelector(AtomicDvP.CancelAlreadyRequested.selector, bytes32("T1"), bankA));
+        dvp.cancel("T1");
+
+        // A pending request does not block the obligation from settling.
+        vm.prank(bankB);
+        dvp.settle("T1");
+        assertEq(security.balanceOf(bankB), 10);
+        assertEq(cash.balanceOf(bankA), 1000 * M);
+    }
+
+    function test_ABoundTradeCancelsOnlyBilaterally() public {
+        _proposeT1();
+        vm.prank(bankB);
+        dvp.bind("T1");
+        vm.prank(bankA);
+        dvp.cancel("T1"); // request
+        vm.prank(bankB);
+        dvp.cancel("T1"); // consent
+        assertTrue(_status("T1") == AtomicDvP.Status.Cancelled);
+
+        vm.prank(bankA);
+        vm.expectRevert(
+            abi.encodeWithSelector(AtomicDvP.NotBound.selector, bytes32("T1"), AtomicDvP.Status.Cancelled)
+        );
+        dvp.settle("T1");
+    }
+
+    /// A bound trade that reaches expiry unfunded has lapsed: abandonment is
+    /// unilateral again, and settlement is closed.
+    function test_AnExpiredBoundTradeCanBeAbandonedAlone() public {
+        _proposeT1();
+        vm.prank(bankB);
+        dvp.bind("T1");
+        vm.warp(block.timestamp + 2 hours);
+
+        vm.prank(bankB);
+        vm.expectRevert(abi.encodeWithSelector(AtomicDvP.Expired.selector, uint64(block.timestamp - 1 hours)));
+        dvp.settle("T1");
+
+        vm.prank(bankA);
+        dvp.cancel("T1");
+        assertTrue(_status("T1") == AtomicDvP.Status.Cancelled);
+    }
+
+    /// Pins the breadth of SETTLEMENT_ROLE deliberately: a holder can move ANY
+    /// participant's cash with no allowance. That is why granting it is the
+    /// governance surface of the whole design — only small, immutable,
+    /// single-purpose settlement contracts, never a large or upgradeable one.
+    function test_SettlementRoleCanMoveAnyParticipantsCash() public {
+        _fund(bankA, 100);
+        cash.grantRole(cash.SETTLEMENT_ROLE(), address(this));
+        cash.settlementTransfer(bankA, bankB, 100 * M); // no approval anywhere
+        assertEq(cash.balanceOf(bankB), 100 * M);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                             Permissioning and remedies
     //////////////////////////////////////////////////////////////////////////*/

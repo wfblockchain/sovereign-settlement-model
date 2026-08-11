@@ -245,9 +245,9 @@ flowchart TB
 |---|---|
 | `contracts/src/SettlementToken.sol` | Par token, ERC-7943 (uRWA) gate/freeze/force, accrual index, key-loss recovery |
 | `contracts/src/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
-| `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash: both legs in one transaction, or neither |
+| `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
 | `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
-| `contracts/test/` | 30 Foundry tests pinning the invariants, incl. two audit regressions and the two-token PvP lane |
+| `contracts/test/` | 36 Foundry tests pinning the invariants, incl. two audit regressions, the two-token PvP lane and the bound-trade cancellation regime |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
