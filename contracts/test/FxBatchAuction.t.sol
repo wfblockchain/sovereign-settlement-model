@@ -92,11 +92,11 @@ contract FxBatchAuctionTest is Test {
     function _standardBatch() internal {
         auction.openBatch(1, treasury, 800 * M, 600, 600);
         _commit(1, lp1, 93e16, 400 * M, "s1");
-        _commit(1, lp2, 92e16, 300 * M, "s2");
+        _commit(1, lp2, 921e15, 300 * M, "s2");
         _commit(1, lp3, 91e16, 300 * M, "s3");
         vm.warp(t0 + 601);
         _reveal(1, lp1, 93e16, 400 * M, "s1");
-        _reveal(1, lp2, 92e16, 300 * M, "s2");
+        _reveal(1, lp2, 921e15, 300 * M, "s2");
         _reveal(1, lp3, 91e16, 300 * M, "s3");
         vm.warp(t0 + 1201);
     }
@@ -190,7 +190,7 @@ contract FxBatchAuctionTest is Test {
 
         // Committing after the window: rejected.
         vm.expectRevert(abi.encodeWithSelector(FxBatchAuction.CommitWindowClosed.selector, 1));
-        _commit(1, lp2, 92e16, 300 * M, "s2");
+        _commit(1, lp2, 921e15, 300 * M, "s2");
 
         // Revealing after the window: rejected.
         vm.warp(t0 + 1201);
@@ -201,7 +201,7 @@ contract FxBatchAuctionTest is Test {
     function test_UnrevealedBidsSimplyLapse() public {
         auction.openBatch(1, treasury, 800 * M, 600, 600);
         _commit(1, lp1, 93e16, 400 * M, "s1");
-        _commit(1, lp2, 92e16, 300 * M, "s2");
+        _commit(1, lp2, 921e15, 300 * M, "s2");
         vm.warp(t0 + 601);
         _reveal(1, lp1, 93e16, 400 * M, "s1"); // lp2 stays sealed
         vm.warp(t0 + 1201);
