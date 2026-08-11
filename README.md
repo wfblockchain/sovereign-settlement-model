@@ -29,12 +29,8 @@ A transferable claim gets a market; a market prices the claim in real time. So
 flowchart TB
     T["Make a claim transferable"] --> M["A market prices it, in real time"]
     M --> Q{"What does that market price?"}
-    Q -->|"deposit token (M2)"| R1["Each issuing bank's credit —
-    a live price feed on bank stress
-    = a run accelerant by design"]
-    Q -->|"pool claim (M0)"| R2["Nothing bank-specific —
-    residual risks (operator, account structure)
-    are governed, not market-priced"]
+    Q -->|"deposit token (M2)"| R1["Each issuing bank's credit —<br/>a live price feed on bank stress<br/>= a run accelerant by design"]
+    Q -->|"pool claim (M0)"| R2["Nothing bank-specific —<br/>residual risks (operator, account structure)<br/>are governed, not market-priced"]
 ```
 
 So the settlement tier should be the **transferable** one and the deposit tier
@@ -97,16 +93,17 @@ Mechanisms 2 and 3 in one trace:
 sequenceDiagram
     participant A as Bank A
     participant NE as NettingEngine
-    participant OPT as Optimiser (off-chain)
+    participant OPT as Off-chain optimiser
     participant OP as Operator
     participant TOK as SettlementToken
     A->>NE: submitObligation(id, payee, amount)
-    Note over NE: nothing moves — obligation queued
+    Note over NE: nothing moves, obligation queued
     OPT->>OP: feasible net plan (a search problem)
-    OP->>NE: settleCycle(cycleId, net[], discharged[])
-    Note over NE: recompute net from discharged obligations —<br/>reject unless it matches and sums to zero (a linear scan)
-    NE->>TOK: settlementTransfer — debits first, then credits
-    Note over TOK: the full gate + freeze + accrual pipeline<br/>still runs on every leg
+    OP->>NE: settleCycle(cycleId, netPositions, discharged)
+    Note over NE: recomputes the net set from the discharged obligations
+    Note over NE: rejects unless it matches and sums to zero (a linear scan)
+    NE->>TOK: settlementTransfer, debits first then credits
+    Note over TOK: the full gate, freeze and accrual pipeline runs on every leg
 ```
 
 ## The role in a two-tier system: the conversion layer
@@ -123,12 +120,8 @@ layer's mechanisms.
 
 ```mermaid
 flowchart LR
-    DA["Deposit token
-    Bank A's customer (M2)"] -->|"burn at A"| CORE["Pool claim (M0)
-    settle A→B — netted
-    with every other conversion"]
-    CORE -->|"mint at B"| DB["Deposit token
-    Bank B's customer (M2)"]
+    DA["Deposit token<br/>Bank A's customer (M2)"] -->|"burn at A"| CORE["Pool claim (M0)<br/>settle A→B, netted<br/>with every other conversion"]
+    CORE -->|"mint at B"| DB["Deposit token<br/>Bank B's customer (M2)"]
 ```
 
 One atomic operation: the customer sees an instant payment, no interbank claim
@@ -161,29 +154,21 @@ argument in one picture.
 
 ```mermaid
 flowchart TB
-    OPT["Netting optimiser
-    off-chain"] -. "feasible plan (chain re-verifies)" .-> NE
-    BANKS["Member banks
-    PARTICIPANT_ROLE"] -->|"submitObligation"| NE
+    OPT["Netting optimiser<br/>off-chain"] -. "feasible plan, chain re-verifies" .-> NE
+    BANKS["Member banks<br/>PARTICIPANT_ROLE"] -->|"submitObligation"| NE
     BANKS -->|"propose · accept"| DVP
-    CH["Clearing house
-    CLEARING_HOUSE · OPERATOR"] -->|"settleCycle"| NE
+    CH["Clearing house<br/>CLEARING_HOUSE · OPERATOR"] -->|"settleCycle"| NE
     CH -->|"fund · defund · accrueYield"| TOK
-    COMP["Compliance
-    COMPLIANCE_ROLE"] -->|"freeze · force · recover"| TOK
-    NE["NettingEngine
-    holds obligations, not tokens"]
-    DVP["AtomicDvP
-    both legs, one tx — or neither"]
-    TOK["SettlementToken
-    par · ERC-7943 · accrual index"]
-    NE -->|"settlementTransfer — net positions only"| PIPE
+    COMP["Compliance<br/>COMPLIANCE_ROLE"] -->|"freeze · force · recover"| TOK
+    NE["NettingEngine<br/>holds obligations, not tokens"]
+    DVP["AtomicDvP<br/>both legs, one tx, or neither"]
+    TOK["SettlementToken<br/>par · ERC-7943 · accrual index"]
+    NE -->|"settlementTransfer, net positions only"| PIPE
     DVP -->|"cash leg"| PIPE
     TOK -->|"mint · burn · transfer"| PIPE
     subgraph PIPE["_update — runs on every balance change"]
         direction LR
-        G1["admission:
-        canSend / canReceive"] --> G2["unfrozen ≥ amount"] --> G3["_syncAccrual(from, to)"] --> G4["balances move"]
+        G1["admission:<br/>canSend / canReceive"] --> G2["unfrozen ≥ amount"] --> G3["_syncAccrual(from, to)"] --> G4["balances move"]
     end
 ```
 
