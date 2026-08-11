@@ -93,12 +93,12 @@ Mechanisms 2 and 3 in one trace:
 sequenceDiagram
     participant A as Bank A
     participant NE as NettingEngine
-    participant OPT as Off-chain optimiser
+    participant PLAN as Off-chain optimiser
     participant OP as Operator
     participant TOK as SettlementToken
     A->>NE: submitObligation(id, payee, amount)
     Note over NE: nothing moves, obligation queued
-    OPT->>OP: feasible net plan (a search problem)
+    PLAN->>OP: feasible net plan (a search problem)
     OP->>NE: settleCycle(cycleId, netPositions, discharged)
     Note over NE: recomputes the net set from the discharged obligations
     Note over NE: rejects unless it matches and sums to zero (a linear scan)
