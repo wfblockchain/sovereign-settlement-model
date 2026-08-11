@@ -157,6 +157,38 @@ a market. The auction sells that residual under three commitments:
   no queue. Firm quotes need no last-look — a winning reveal settles
   atomically in the same transaction.
 
+The waterfall — price as little as possible:
+
+```mermaid
+flowchart LR
+    G["gross cross-currency<br/>flows, both directions"] --> N["net + cross at mid<br/>most cancels — zero spread"]
+    N --> R["residual<br/>imbalance"]
+    R --> A["sealed-bid batch auction<br/>uniform marginal price"]
+    A --> P["atomic PvP<br/>both gates, one tx — or neither"]
+    R -.->|"urgent payment"| Q["RFQ gross lane<br/>AtomicDvP unchanged, immediacy priced"]
+    Q --> P
+```
+
+One batch end to end, with the numbers the tests pin:
+
+```mermaid
+sequenceDiagram
+    participant OP as Operator
+    participant AU as FxBatchAuction
+    participant LP as LP banks
+    participant TR as Treasury
+    OP->>AU: openBatch(id, treasury, 800m USD, windows)
+    LP->>AU: commitBid(hash), three bidders
+    Note over AU: sealed - a visible bid on a shared ledger is a free option
+    LP->>AU: revealBid(rate, amount, salt)
+    Note over AU: 0.9300 for 400m, 0.9210 for 300m, 0.9100 for 300m
+    OP->>AU: settleBatch(id, fillOrder)
+    Note over AU: verified - a complete, rate-sorted permutation of every reveal
+    Note over AU: greedy fill 400+300+100, clearing rate 0.9100 for every winner
+    AU->>TR: EUR 728.0m = 800m x 0.9100 (settlementTransfer)
+    AU->>LP: USD 400m / 300m / 100m, each paid at 0.9100
+```
+
 Because each currency's pool runs its own accrual index at its own
 policy-proximate rate, the index differential is the forward points — covered
 interest parity by arithmetic — and an FX swap decomposes into a spot PvP plus
