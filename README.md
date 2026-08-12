@@ -127,6 +127,23 @@ flowchart LR
 One atomic operation: the customer sees an instant payment, no interbank claim
 outlives the transaction, and par between the banks' tokens holds by mechanism.
 
+That conversion layer is now executable. **`DepositToken`** is one bank's
+tokenized deposit — minted against deposits taken, burned against
+withdrawals, gated to that bank's own customers, paying deposit interest
+through the same accrual-index mechanics at the bank's own rate.
+Deliberately, it has **no backing invariant**: it is a chartered bank's
+liability, backed by the bank's balance sheet — money creation lives at this
+tier, where it is licensed, capitalized and insured, and nowhere else.
+Interbank transfer is structurally impossible (each bank's token is its own
+contract, gated to its own customers), so a cross-bank payment can only be a
+conversion: **`ConversionBridge`** burns at Bank A, moves settlement money
+A→B over the settlement path, and mints at Bank B — one transaction or none,
+with every tier's gates binding on its own leg and **no rate parameter
+anywhere on the path**. The bridge is deliberately dumb: if the sending
+bank's settlement balance is short, the conversion reverts — funding that
+leg is the elasticity stack's job (netting, then collateralized intraday
+liquidity, then elastic backing), never the seam's.
+
 ## Cross-currency: PvP and the residual auction
 
 The same mechanics extend across currencies. Two findings, both pinned by
@@ -247,7 +264,9 @@ flowchart TB
 | `contracts/src/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
 | `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
 | `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
-| `contracts/test/` | 36 Foundry tests pinning the invariants, incl. two audit regressions, the two-token PvP lane and the bound-trade cancellation regime |
+| `contracts/src/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
+| `contracts/src/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
+| `contracts/test/` | 45 Foundry tests pinning the invariants, incl. two audit regressions, the two-token PvP lane, the bound-trade cancellation regime and the atomic M2 conversion |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
