@@ -182,6 +182,63 @@ contract M2ConversionTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
+                        Audit regressions — the seam's edges
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// The money-printing surface: conversionMint creates M2 with no deposit
+    /// behind it if anyone but the bridge can reach it. Pin that they cannot —
+    /// not an outsider, not even the issuing bank itself.
+    function test_ConversionLegsAnswerOnlyToTheBridge() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        tokB.conversionMint(alice, 1 * M);
+
+        vm.prank(bankB); // the bank mints deposits via issueDeposit, never this
+        vm.expectRevert();
+        tokB.conversionMint(bob, 1 * M);
+
+        vm.prank(bankA);
+        vm.expectRevert();
+        tokA.conversionBurn(alice, 1 * M);
+    }
+
+    function test_AnUnregisteredTokenCannotConvert() public {
+        DepositToken rogue =
+            new DepositToken("Rogue Deposit", "RGD", 6, registry, POLICY_CUST_A, address(this));
+        rogue.grantRole(rogue.CONVERSION_ROLE(), address(bridge));
+
+        vm.prank(bankA);
+        vm.expectRevert(
+            abi.encodeWithSelector(ConversionBridge.BankNotRegistered.selector, address(rogue))
+        );
+        bridge.convert(tokA, rogue, alice, alice, 1 * M);
+    }
+
+    /// Intra-bank payments are plain transfers on the bank's books; routing
+    /// one through the settlement tier would be a category error.
+    function test_IntraBankConversionIsRefused() public {
+        vm.prank(bankA);
+        vm.expectRevert(abi.encodeWithSelector(ConversionBridge.SameBank.selector, address(tokA)));
+        bridge.convert(tokA, tokA, alice, carol, 1 * M);
+    }
+
+    /// Interest earned before a conversion is banked at the burn, not lost
+    /// with the balance — economic ownership follows the holder through the
+    /// seam, same as everywhere else.
+    function test_EarnedInterestSurvivesConversion() public {
+        vm.prank(bankA);
+        tokA.accrueInterest(50 * M); // alice holds the whole 500 supply
+
+        assertEq(tokA.interestOf(alice), 50 * M);
+
+        vm.prank(bankA);
+        bridge.convert(tokA, tokB, alice, bob, 200 * M);
+
+        // Her balance crossed the seam; her earned interest did not evaporate.
+        assertEq(tokA.interestOf(alice), 50 * M);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                             Deposit interest follows the holder
     //////////////////////////////////////////////////////////////////////////*/
 

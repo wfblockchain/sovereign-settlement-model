@@ -266,7 +266,7 @@ flowchart TB
 | `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
 | `contracts/src/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
 | `contracts/src/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
-| `contracts/test/` | 45 Foundry tests pinning the invariants, incl. two audit regressions, the two-token PvP lane, the bound-trade cancellation regime and the atomic M2 conversion |
+| `contracts/test/` | 49 Foundry tests pinning the invariants, incl. audit regressions for recovery, the efficiency metric, bound-trade cancellation and the conversion seam (mint answers only to the bridge) |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
