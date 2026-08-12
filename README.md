@@ -144,6 +144,110 @@ bank's settlement balance is short, the conversion reverts — funding that
 leg is the elasticity stack's job (netting, then collateralized intraday
 liquidity, then elastic backing), never the seam's.
 
+## Elasticity: how a fully-backed system breathes
+
+The strongest objection to a prefunded settlement tier is locked money: the
+pool must be sized to **peak** gross demand, and every parked dollar above
+usage is sterilized balance sheet. Today's system hides the cost — the Fed
+prices collateralized daylight overdrafts at zero precisely so banks need not
+hoard — and a token pool inherits none of that machinery.
+
+The tempting fix is the wrong one. Making the settlement claim *fractional* —
+claims exceeding backing — would make it run-prone by theorem: a demandable
+par claim against assets that cannot all liquidate at par, with no deposit
+insurance and no lender of last resort, is the Diamond–Dybvig setup with the
+protective institutions deleted. It would relocate run risk to the core,
+inverting the thesis this design stands on. The resolution is a distinction
+the fractional framing hides:
+
+> Fractional reserve bundles three things — credit intermediation, deposit
+> creation, maturity transformation. A settlement system needs only a timing
+> bridge. **Elasticity of funding, not elasticity of money.**
+
+Money creation stays where it is chartered, capitalized and insured; the
+settlement tier gets funding elasticity from mechanisms that never break its
+backing invariant:
+
+```mermaid
+flowchart TB
+    Q{"Where does elasticity come from?"}
+    Q -->|"money creation"| M2T["M2 — the deposit tier<br/>banks mint deposits against credit<br/>chartered, capitalized, insured"]
+    Q -->|"funding elasticity"| M0T["M0 — the settlement tier<br/>a timing bridge, never creation<br/>totalSupply == backing, always"]
+    M2T --> K1["DepositToken has NO backing invariant —<br/>deliberately: it is a bank liability"]
+    M0T --> K2["four mechanisms below —<br/>none ever mints against nothing"]
+```
+
+### The four mechanisms, in the order they absorb demand
+
+**1. Netting** *(implemented — `NettingEngine` + `internal/clearing`).*
+Obligations queue and offset; only residuals fund. Measured ~9:1 here at
+batch cycles; the production ceiling is CHIPS-like 29:1. The single biggest
+lever, and the reason the pool is sized to residuals rather than peaks.
+
+**2. Idle-balance intermediation** *(design — the `IntradayLiquidityPool`
+extension).* Cash-rich members deposit spare M0 single-sided; a short member
+draws against tokenized collateral at a haircut, intraday, at a
+utilization-curve rate, and repays from incoming flows. A payment may be
+funded part own-balance, part draw — a daylight overdraft with a down
+payment. Total M0 is conserved: the pool reallocates existing balances, so
+this is the *intermediation* half of fractional reserve with the *creation*
+half amputated. Its limit is honest: total draws ≤ pool deposits, so it
+needs the next layer behind it.
+
+**3. Elastic backing** *(design — `fundInKind`/`defundInKind` on the
+token).* When the whole system is short, supply itself breathes — against
+collateral, never against nothing. The clearing house takes tokenized
+Treasuries in via atomic DvP repo, mints M0 at a haircut, and burns on the
+same-day unwind. The backing invariant generalizes from
+`totalSupply == reservePool` to `totalSupply == cash + haircut(HQLA)`:
+composition varies intraday, full backing never lapses. This is the elastic-
+currency answer — supply against collateral — not the fractional one, and
+its operational precedent (intraday tokenized repo) already runs at hundreds
+of billions per day in production systems.
+
+```mermaid
+sequenceDiagram
+    participant BK as Member bank
+    participant CH as Clearing house
+    participant TOK as SettlementToken
+    BK->>CH: tokenized Treasuries, repo leg in
+    CH->>TOK: fundInKind - mint at a haircut
+    Note over TOK: totalSupply == cash + haircut(HQLA) - fully backed, composition shifted
+    BK->>BK: settle the day's payments with the minted M0
+    BK->>CH: repo unwind, same day
+    CH->>TOK: defundInKind - burn, Treasuries released
+    Note over TOK: supply breathed with demand and never exceeded backing
+```
+
+**4. Committed standby liquidity** *(design — a registry and a fee
+schedule).* Designated members sell committed intraday lines: standby fees
+in calm, mandatory provision in stress. The tail is priced instead of
+prefunded, and drawing a line carries no stigma because it exercises a
+paid-for right.
+
+### How the stack composes
+
+```mermaid
+flowchart TB
+    D["settlement demand<br/>peak gross: 3.0bn"] -->|"most payments offset"| N["netting<br/>(implemented)"]
+    N -->|"residual positions ~400m"| P["idle-balance pool<br/>borrow existing M0 vs collateral"]
+    P -->|"unmet timing gap ~250m"| E["elastic backing<br/>mint vs Treasuries, burn on unwind"]
+    E -->|"stress tail"| C["committed standby lines<br/>priced, not prefunded"]
+    C --> F["parked-cash floor ~100m<br/>earning the accrual index"]
+```
+
+Order of magnitude, the parked-cash requirement falls ~30× from naive
+peak-prefunding — and the floor that remains is remunerated through the
+accrual index, so even it is not dead weight. Two properties hold at every
+layer: **no claim ever exists without backing behind it** (the run-proofness
+of the core is never traded for liquidity), and **the conversion seam stays
+dumb** (a short settlement leg reverts; elasticity operates behind the
+bridge, never inside it).
+
+The honest limit: no pool is a central bank. This stack compresses and
+remunerates the need for liquidity; it does not manufacture a lender of last
+resort, and nothing in it depends on being granted one.
+
 ## Cross-currency: PvP and the residual auction
 
 The same mechanics extend across currencies. Two findings, both pinned by
@@ -334,6 +438,9 @@ atomicity should name the trust assumption it stands on.
   mid (upstream of the auction) needs a rate source with the same
   "verified, not trusted" treatment as the optimiser — e.g. a bounded median
   of member submissions — which this repo does not implement.
+- **Elasticity beyond netting is specified, not implemented**: the
+  idle-balance pool, elastic backing and committed-line registry above are
+  design mechanisms with stated invariants; only netting ships in this repo.
 - **A 24×7 token redeems into banking-hours money**: `defund` promises fiat and
   Fedwire closes. Redemption windows or an intraday facility are a policy
   choice the contracts do not make.
