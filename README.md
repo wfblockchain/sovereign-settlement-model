@@ -144,6 +144,39 @@ bank's settlement balance is short, the conversion reverts — funding that
 leg is the elasticity stack's job (netting, then collateralized intraday
 liquidity, then elastic backing), never the seam's.
 
+## The derivatives layer: physically-settled forwards and swaps
+
+Most of the FX market is not spot: swaps and forwards — commitments about
+future settlement — dominate turnover, and they need settlement money only
+at settlement instants. `FxForward` builds the two dominant instruments on
+the settlement tokens, on one deliberate design line:
+
+**Physical settlement only.** Every settlement exchanges BOTH principals in
+full, atomically, in the two currencies' settlement tokens. The contract
+holds no oracle, no fixing, and no rate object — only the principal amounts
+agreed at inception (the implied rate is their ratio, fixed forever). This
+is the exempt shape of FX derivatives: physically-settled forwards and swaps
+sit outside the statutory swap perimeter, while cash-settled instruments —
+NDFs, options, anything settling a difference — do not, and are deliberately
+not implemented.
+
+- **Forwards** follow the bound-trade lifecycle: propose (revocable offer) →
+  bind (mutual obligation) → settle on/after the value date (either party
+  triggers; each currency's gates, freezes and accrual run on its own leg) →
+  or cancel (bilateral while live, unilateral once lapsed).
+- **Swaps are two exchanges, not a new instrument**: accepting a swap
+  settles the near leg in the same transaction and creates the far leg as an
+  already-bound forward with roles reversed. Between the legs each party
+  holds the other's currency and earns that token's accrual index — the
+  carry travels through the indices (covered interest parity, mechanical),
+  pinned by test.
+
+Known limit, stated plainly: no variation margin — between bind and
+settlement the parties carry replacement-cost exposure, as in any
+uncollateralized bilateral forward. Production wants VM posted in the
+settlement token (where it would earn the accrual index while pledged) and
+close-out netting semantics; both are design extensions, not code.
+
 ## Elasticity: how a fully-backed system breathes
 
 The strongest objection to a prefunded settlement tier is locked money: the
@@ -368,9 +401,10 @@ flowchart TB
 | `contracts/src/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
 | `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
 | `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
+| `contracts/src/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
 | `contracts/src/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
 | `contracts/src/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
-| `contracts/test/` | 49 Foundry tests pinning the invariants, incl. audit regressions for recovery, the efficiency metric, bound-trade cancellation and the conversion seam (mint answers only to the bridge) |
+| `contracts/test/` | 62 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, and the derivatives layer (physical-settlement-only, carry-through-indices) |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
