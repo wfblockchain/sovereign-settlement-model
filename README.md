@@ -445,6 +445,48 @@ mandates one), then attested messaging (Chainlink CRE-style), then HTLCs last.
 Same-ledger DvP is the only unconditional rung; every cross-chain claim of
 atomicity should name the trust assumption it stands on.
 
+## On-chain versus messaging: what actually changes
+
+The honest framing first: a shared ledger changes nothing about what banking
+*is* — credit judgment, inventory risk and admission decisions all remain —
+and changes almost everything about how banking *coordinates*. Every benefit
+in this repository traces to one root difference:
+
+```mermaid
+flowchart LR
+    T["TODAY<br/>many ledgers, synced by messages<br/>message &ne; settlement"] --> G["the gap:<br/>reconciliation &middot; Herstatt windows<br/>delay &middot; trapped prefunding"]
+    C["ON-CHAIN<br/>one shared state<br/>the record IS the money"] --> B["the gap closed:<br/>atomic legs &middot; embedded rules<br/>verified operators &middot; earning money &middot; 24&times;7"]
+```
+
+Six mechanism shifts follow, each pinned by a test in this repo rather than
+asserted:
+
+| # | Today (messaging) | On-chain (shared state) | Where pinned |
+|---|---|---|---|
+| 1 | Many ledgers kept in sync by messages; drift, reconciliation, delay | One state — the record is the money; reconciliation ceases as a category | every balance test |
+| 2 | Two legs, two systems, two times: Herstatt risk, batch-window patches | Both legs in one transaction or neither; conditional settlement is structural | DvP/PvP/conversion atomicity tests |
+| 3 | Compliance around the payment: screen before, audit after, strand mid-chain | Gates inside the transfer — a non-compliant payment cannot partially exist; both jurisdictions bind atomically | gate/freeze tests on every leg |
+| 4 | Operator behavior policed by audit after the fact; rivals refuse shared venues | Operator powers verified at execution: sealed bids, checked fill order — trust becomes technical | auction no-reorder/no-omission tests |
+| 5 | Idle prefunded balances, batch interest, collateral dead while pledged | Yield travels with the token: balances earn their index, CIP holds by arithmetic | accrual and carry tests |
+| 6 | Hours plus patches: cutoffs, batch windows, weekend liquidity workarounds | The machine does not close; prefunding compressed by the elasticity stack | netting + elasticity design |
+
+And what does **not** improve — the list that makes the rest credible:
+market risk is untouched (inventory is inventory; the model removes
+frictional cost, never price risk); credit judgment is untouched; liquidity
+is still required at settlement instants — atomicity *tightens* the funding
+requirement, which is exactly why the elasticity stack exists. Four things
+get genuinely harder: privacy (bilateral opacity was a feature; the public
+obligation graph is this repo's first stated limit), operational risk
+changes shape (key custody and contract correctness replace reconciliation
+error), irreversibility cuts both ways (recovery is a governed forced
+transfer, not a courtesy recall), and finality in code is not yet finality
+in law everywhere.
+
+None of this is blockchain ideology. Three engineering properties do all the
+work — **shared state, atomic execution, rules embedded in the asset** — and
+each claim above reduces to a checkable test, which is how the question
+"is on-chain better?" stays an engineering question instead of a belief.
+
 ## Position among adjacent projects
 
 The tokenized-money landscape is rich, and each major project has proven a
