@@ -204,6 +204,33 @@ treasury policy is a stream of them. The production path adds Permit2-style
 off-chain signatures and the ERC-7683 order shape; the constraint semantics
 are this contract's.
 
+**Standing orders are that stream, implemented** (`FxStandingOrder` +
+`TwapPolicy`): a member registers a policy once — a TWAP, a scheduled
+hedge — and the policy turns the clock into tranches, each with its own
+limit floor and fill window. The policy is consulted *inside* the fill
+transaction, so validity is re-derived at settlement and the poller is
+never trusted — the same stance the netting engine takes toward its
+optimiser. Front-loading is impossible because the current tranche is a
+pure function of the clock; double-filling is impossible because the
+registry keeps one bit per tranche; and an owner-level **guard** screens
+every fill of every standing order the member has — the on-chain seat for
+a member's whitelist policy, fail-closed. Policies tell their poller when
+to come back through typed scheduling reverts (try-at-epoch, never) —
+scheduled re-evaluation, not dumb polling. Adapted from ComposableCoW's
+conditional-order framework, with its generate/verify split collapsed
+into one call because this order flow settles where it is posted.
+
+Three client-side stances run across the whole market layer, each pinned
+by test: **proceeds deliver to a named receiver** (an intent, an urgent
+order, a standing tranche, and each forward leg can pay a designated
+beneficiary directly — convert-and-deliver is one atomic settlement, and
+the receiver passes the delivering currency's admission gate like any
+recipient); **rounding always favors the client's leg** (the professional
+side carries the dust, never the client); and **contract accounts are
+first-class members** (membership is address-based, so a quorum-controlled
+treasury wallet posts, receives and revokes under its own on-chain
+approval policy — no signature machinery required).
+
 Known limit, stated plainly: no variation margin — between bind and
 settlement the parties carry replacement-cost exposure, as in any
 uncollateralized bilateral forward. Production wants VM posted in the
@@ -467,10 +494,12 @@ repository splits.
 | `contracts/src/market/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
 | `contracts/src/market/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
 | `contracts/src/market/FxDutchLane.sol` | Urgent conversions by declining-price auction: block-height decay, bounded floor, optional exclusive first look |
-| `contracts/src/market/FxIntent.sol` | Client orders as constraints: limit-floored whole-order fills, surplus to the client, nothing moves until a valid fill |
+| `contracts/src/market/FxIntent.sol` | Client orders as constraints: limit-floored whole-order fills, surplus to the client, named receivers, nothing moves until a valid fill |
+| `contracts/src/market/FxStandingOrder.sol` | Standing client policies as streams of intents: per-tranche fills, owner guards (fail-closed), typed scheduling hints, named receivers |
+| `contracts/src/market/TwapPolicy.sol` | n parts, one per window, front-loading impossible by clock arithmetic; per-part limit floor and fill window |
 | `contracts/src/clearing/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
 | `contracts/src/clearing/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
-| `contracts/test/` | 104 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, the derivatives layer, the urgent and intent lanes, the liquidity pool's conservation and loss-bearing, and the solver competition |
+| `contracts/test/` | 125 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, the derivatives layer, the urgent/intent/standing lanes, the liquidity pool's conservation and loss-bearing, the solver competition, third-party delivery, and the client-favoring rounding stance |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
