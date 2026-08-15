@@ -267,4 +267,46 @@ contract FxForwardTest is Test {
         assertEq(eur.balanceOf(alpha), 91 * M);
     }
 
+    /*//////////////////////////////////////////////////////////////////////////
+                        Delivery addresses — settle-and-deliver
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_DeliveryAddressesRouteBothLegs() public {
+        _bound();
+        address alphaTreasury = makeAddr("alpha-treasury");
+        address betaOps = makeAddr("beta-ops");
+        registry.admit(POLICY_EUR, alphaTreasury, true); // alpha's incoming leg is EUR
+        registry.admit(POLICY_USD, betaOps, true); // beta's incoming leg is USD
+
+        // Only a party may instruct delivery.
+        vm.prank(outsider);
+        vm.expectRevert(
+            abi.encodeWithSelector(FxForward.NotAParty.selector, bytes32("F1"), outsider)
+        );
+        desk.setDeliveryAddress("F1", outsider);
+
+        vm.prank(alpha);
+        desk.setDeliveryAddress("F1", alphaTreasury);
+        vm.prank(beta);
+        desk.setDeliveryAddress("F1", betaOps);
+
+        vm.warp(vd);
+        vm.prank(alpha);
+        desk.settle("F1");
+
+        assertEq(usd.balanceOf(betaOps), 100 * M, "the USD leg must land where beta designated");
+        assertEq(eur.balanceOf(alphaTreasury), 91 * M, "the EUR leg must land where alpha designated");
+        assertEq(eur.balanceOf(alpha), 0);
+        assertEq(usd.balanceOf(beta), 0);
+
+        // Once settled, delivery instructions are frozen with the trade.
+        vm.prank(alpha);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FxForward.NotBound.selector, bytes32("F1"), FxForward.Status.Settled
+            )
+        );
+        desk.setDeliveryAddress("F1", alpha);
+    }
+
 }

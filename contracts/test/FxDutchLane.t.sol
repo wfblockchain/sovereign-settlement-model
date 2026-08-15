@@ -52,7 +52,7 @@ contract FxDutchLaneTest is Test {
     ///      order lives 100 blocks, no exclusivity.
     function _open() internal {
         vm.prank(seller);
-        lane.openUrgent("U1", 100 * M, 95e16, 90e16, 50, 100, address(0), 0);
+        lane.openUrgent("U1", address(0), 100 * M, 95e16, 90e16, 50, 100, address(0), 0);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -110,7 +110,7 @@ contract FxDutchLaneTest is Test {
         lane.fill("U1");
 
         assertEq(usd.balanceOf(seller), 100 * M);
-        (, , , , , , , , , bool filled,) = lane.orders("U1");
+        (,,,,,,,,,, bool filled,) = lane.orders("U1");
         assertFalse(filled);
     }
 
@@ -120,7 +120,7 @@ contract FxDutchLaneTest is Test {
 
     function test_ExclusivityWindowHoldsThenOpens() public {
         vm.prank(seller);
-        lane.openUrgent("U2", 100 * M, 95e16, 90e16, 50, 100, fillerA, 10);
+        lane.openUrgent("U2", address(0), 100 * M, 95e16, 90e16, 50, 100, fillerA, 10);
 
         // During the window, only the exclusive filler may fill.
         vm.prank(fillerB);
@@ -138,7 +138,7 @@ contract FxDutchLaneTest is Test {
 
     function test_TheExclusiveFillerMayFillInsideItsWindow() public {
         vm.prank(seller);
-        lane.openUrgent("U2", 100 * M, 95e16, 90e16, 50, 100, fillerA, 10);
+        lane.openUrgent("U2", address(0), 100 * M, 95e16, 90e16, 50, 100, fillerA, 10);
         vm.roll(1000 + 4);
         vm.prank(fillerA);
         lane.fill("U2");
@@ -180,14 +180,42 @@ contract FxDutchLaneTest is Test {
     function test_ScheduleAndRateSanityIsEnforced() public {
         vm.startPrank(seller);
         vm.expectRevert(FxDutchLane.BadRates.selector);
-        lane.openUrgent("X", 100 * M, 90e16, 95e16, 50, 100, address(0), 0); // floor above start
+        lane.openUrgent("X", address(0), 100 * M, 90e16, 95e16, 50, 100, address(0), 0); // floor above start
 
         vm.expectRevert(FxDutchLane.BadSchedule.selector);
-        lane.openUrgent("X", 100 * M, 95e16, 90e16, 50, 40, address(0), 0); // ttl < decay
+        lane.openUrgent("X", address(0), 100 * M, 95e16, 90e16, 50, 40, address(0), 0); // ttl < decay
 
         vm.expectRevert(FxDutchLane.BadSchedule.selector);
-        lane.openUrgent("X", 100 * M, 95e16, 90e16, 50, 100, fillerA, 60); // window >= decay
+        lane.openUrgent("X", address(0), 100 * M, 95e16, 90e16, 50, 100, fillerA, 60); // window >= decay
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                    Delivery and rounding — the client-side stances
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_ProceedsDeliverToTheNamedReceiver() public {
+        address beneficiary = makeAddr("beneficiary");
+        registry.admit(POLICY_EUR, beneficiary, true);
+
+        vm.prank(seller);
+        lane.openUrgent("U3", beneficiary, 100 * M, 95e16, 90e16, 50, 100, address(0), 0);
+        vm.prank(fillerA);
+        lane.fill("U3");
+
+        assertEq(eur.balanceOf(beneficiary), 95 * M, "an urgent conversion is an urgent payment");
+        assertEq(eur.balanceOf(seller), 0);
+        assertEq(usd.balanceOf(fillerA), 100 * M);
+    }
+
+    function test_RoundingFavorsTheSellerByConstruction() public {
+        // 1 raw unit at 0.95: the exact quote is 0.95 raw units. The venue
+        // rounds UP — the client's leg carries the dust, never the filler's.
+        vm.prank(seller);
+        lane.openUrgent("U4", address(0), 1, 95e16, 90e16, 50, 100, address(0), 0);
+        vm.prank(fillerA);
+        lane.fill("U4");
+        assertEq(eur.balanceOf(seller), 1, "the dust belongs to the client");
     }
 
 }

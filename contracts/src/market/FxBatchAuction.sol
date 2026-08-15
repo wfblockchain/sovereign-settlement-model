@@ -211,7 +211,9 @@ contract FxBatchAuction is AccessControl {
             Bid storage bid = bids[fillOrder[i]];
             uint256 fill = bid.amount < toSell ? bid.amount : toSell;
             toSell -= fill;
-            uint256 quoteDue = fill * clearingRate / RATE_SCALE;
+            // Rounded UP: the residual seller's receive leg carries the
+            // dust, never the professional bidder's.
+            uint256 quoteDue = (fill * clearingRate + RATE_SCALE - 1) / RATE_SCALE;
             proceeds += quoteDue;
             QUOTE.settlementTransfer(bid.bidder, b.treasury, quoteDue);
             BASE.settlementTransfer(b.treasury, bid.bidder, fill);

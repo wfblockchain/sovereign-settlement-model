@@ -273,4 +273,26 @@ contract FxBatchAuctionTest is Test {
         assertTrue(eur.backingIntact());
     }
 
+    /*//////////////////////////////////////////////////////////////////////////
+                        Rounding — the client side carries the dust
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_RoundingFavorsTheResidualSellerByConstruction() public {
+        // A 3-raw-unit residual at 0.91: the exact quote is 2.73 raw units.
+        // The professional bidder pays 3 — the dust belongs to the client
+        // side of the venue, never the professional's.
+        auction.openBatch(2, treasury, 3, 600, 600);
+        _commit(2, lp1, 91e16, 3, "d1");
+        vm.warp(t0 + 601);
+        _reveal(2, lp1, 91e16, 3, "d1");
+        vm.warp(t0 + 1201);
+
+        uint256 eurBefore = eur.balanceOf(treasury);
+        uint256[] memory o = new uint256[](1);
+        o[0] = 0;
+        auction.settleBatch(2, o);
+
+        assertEq(eur.balanceOf(treasury) - eurBefore, 3, "the dust belongs to the client side");
+    }
+
 }

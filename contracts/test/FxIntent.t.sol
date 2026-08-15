@@ -6,6 +6,29 @@ import { SettlementToken } from "src/clearing/SettlementToken.sol";
 import { FxIntent } from "src/market/FxIntent.sol";
 import { MockRegistry } from "./ClearingModel.t.sol";
 
+/// @dev A minimal treasury wallet: an owner-gated executor standing in for a
+///      quorum-controlled contract account (a Safe, a policy engine). Used to
+///      pin that membership is address-based — a contract account is a
+///      first-class member carrying its own on-chain approval policy, with no
+///      signature machinery needed. This is the permissioned-venue adaptation
+///      of GPv2's EIP-1271 traders and revocable pre-sign consent.
+contract TreasuryWallet {
+
+    address public immutable BOSS;
+
+    constructor(address boss) {
+        BOSS = boss;
+    }
+
+    function exec(address target, bytes calldata data) external returns (bytes memory) {
+        require(msg.sender == BOSS, "not the boss");
+        (bool ok, bytes memory ret) = target.call(data);
+        require(ok, "exec failed");
+        return ret;
+    }
+
+}
+
 /// @dev The intent primitive: the client posts constraints, fillers compete
 ///      inside them, and a fill below the limit cannot exist.
 contract FxIntentTest is Test {
@@ -50,7 +73,7 @@ contract FxIntentTest is Test {
     /// @dev Sell 100 USD, limit 0.90 EUR/USD, one hour to live.
     function _post() internal {
         vm.prank(client);
-        book.post("I1", 100 * M, 90e16, uint64(block.timestamp + 1 hours));
+        book.post("I1", 100 * M, 90e16, uint64(block.timestamp + 1 hours), address(0));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -98,7 +121,7 @@ contract FxIntentTest is Test {
         book.fill("I1", 90e16);
 
         assertEq(usd.balanceOf(client), 100 * M);
-        (,,,, bool filled,) = book.intents("I1");
+        (,,,,, bool filled,) = book.intents("I1");
         assertFalse(filled, "a failed fill must leave the intent live");
 
         // The intent is still live for a solvent rival.
@@ -162,17 +185,102 @@ contract FxIntentTest is Test {
         _post();
         vm.startPrank(client);
         vm.expectRevert(abi.encodeWithSelector(FxIntent.DuplicateId.selector, bytes32("I1")));
-        book.post("I1", 1 * M, 90e16, uint64(block.timestamp + 1 hours));
+        book.post("I1", 1 * M, 90e16, uint64(block.timestamp + 1 hours), address(0));
 
         vm.expectRevert(FxIntent.ZeroAmount.selector);
-        book.post("I2", 0, 90e16, uint64(block.timestamp + 1 hours));
+        book.post("I2", 0, 90e16, uint64(block.timestamp + 1 hours), address(0));
 
         vm.expectRevert(FxIntent.ZeroAmount.selector);
-        book.post("I2", 1 * M, 0, uint64(block.timestamp + 1 hours));
+        book.post("I2", 1 * M, 0, uint64(block.timestamp + 1 hours), address(0));
 
         vm.expectRevert(FxIntent.BadExpiry.selector);
-        book.post("I2", 1 * M, 90e16, uint64(block.timestamp));
+        book.post("I2", 1 * M, 90e16, uint64(block.timestamp), address(0));
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                        Third-party delivery — the receiver field
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_ProceedsDeliverToTheNamedReceiver() public {
+        address beneficiary = makeAddr("beneficiary");
+        registry.admit(POLICY_EUR, beneficiary, true);
+
+        vm.prank(client);
+        book.post("I2", 100 * M, 90e16, uint64(block.timestamp + 1 hours), beneficiary);
+        vm.prank(fillerA);
+        book.fill("I2", 90e16);
+
+        assertEq(eur.balanceOf(beneficiary), 90 * M, "convert-and-deliver must be one settlement");
+        assertEq(eur.balanceOf(client), 0);
+        assertEq(usd.balanceOf(fillerA), 100 * M);
+    }
+
+    function test_TheReceiverMustPassTheQuoteAdmissionGate() public {
+        address beneficiary = makeAddr("beneficiary"); // NOT admitted to EUR
+        vm.prank(client);
+        book.post("I2", 100 * M, 90e16, uint64(block.timestamp + 1 hours), beneficiary);
+        vm.prank(fillerA);
+        vm.expectRevert();
+        book.fill("I2", 90e16);
+        assertEq(usd.balanceOf(client), 100 * M, "nothing moves when the receiver fails the gate");
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                        Rounding — the client's leg carries the dust
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_RoundingFavorsTheClientByConstruction() public {
+        // 1 raw unit at 0.91: the exact quote is 0.91 raw units. Floor would
+        // hand the filler the base for zero quote; the venue rounds UP.
+        vm.prank(client);
+        book.post("I2", 1, 91e16, uint64(block.timestamp + 1 hours), address(0));
+        vm.prank(fillerA);
+        book.fill("I2", 91e16);
+        assertEq(eur.balanceOf(client), 1, "the dust belongs to the client");
+        assertEq(usd.balanceOf(fillerA), 1);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                    Contract accounts are first-class members
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function test_AContractAccountIsAFirstClassMember() public {
+        address boss = makeAddr("treasury-boss");
+        TreasuryWallet wallet = new TreasuryWallet(boss);
+        registry.admit(POLICY_USD, address(wallet), true);
+        registry.admit(POLICY_EUR, address(wallet), true);
+        usd.fund(address(wallet), 100 * M);
+
+        // The wallet posts under its own authority policy: only its boss
+        // may instruct it — approval logic lives in the member's contract,
+        // evaluated on-chain, no signatures anywhere.
+        vm.prank(boss);
+        wallet.exec(
+            address(book),
+            abi.encodeCall(
+                FxIntent.post, ("W1", 100 * M, 90e16, uint64(block.timestamp + 1 hours), address(0))
+            )
+        );
+        vm.prank(fillerA);
+        book.fill("W1", 90e16);
+        assertEq(eur.balanceOf(address(wallet)), 90 * M);
+
+        // And it revokes standing consent the same way — the pre-sign
+        // adaptation: consent is a state the account controls, not a
+        // signature it cannot take back.
+        vm.prank(boss);
+        wallet.exec(
+            address(book),
+            abi.encodeCall(
+                FxIntent.post, ("W2", 1 * M, 90e16, uint64(block.timestamp + 1 hours), address(0))
+            )
+        );
+        vm.prank(boss);
+        wallet.exec(address(book), abi.encodeCall(FxIntent.cancel, ("W2")));
+        vm.prank(fillerA);
+        vm.expectRevert(abi.encodeWithSelector(FxIntent.NotLive.selector, bytes32("W2")));
+        book.fill("W2", 90e16);
     }
 
 }

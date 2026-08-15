@@ -39,7 +39,8 @@ contract FxDutchLane {
     SettlementToken public immutable QUOTE;
 
     struct Urgent {
-        address seller; // sells BASE, receives QUOTE — always the opener
+        address seller; // sells BASE — always the opener
+        address receiver; // QUOTE proceeds go here; zero = the seller
         uint256 baseAmount;
         uint256 startRate; // seller-favorable opening rate
         uint256 floorRate; // worst rate the seller accepts
@@ -57,6 +58,7 @@ contract FxDutchLane {
     event UrgentOpened(
         bytes32 indexed id,
         address indexed seller,
+        address receiver,
         uint256 baseAmount,
         uint256 startRate,
         uint256 floorRate,
@@ -84,8 +86,13 @@ contract FxDutchLane {
     }
 
     /// @notice Opens an urgent order for the caller's own account.
+    ///         `receiver` is where the QUOTE proceeds are delivered (zero =
+    ///         the seller) — an urgent conversion is usually an urgent
+    ///         PAYMENT, and naming the beneficiary makes convert-and-deliver
+    ///         one atomic fill.
     function openUrgent(
         bytes32 id,
+        address receiver,
         uint256 baseAmount,
         uint256 startRate,
         uint256 floorRate,
@@ -102,6 +109,7 @@ contract FxDutchLane {
 
         orders[id] = Urgent({
             seller: msg.sender,
+            receiver: receiver,
             baseAmount: baseAmount,
             startRate: startRate,
             floorRate: floorRate,
@@ -116,6 +124,7 @@ contract FxDutchLane {
         emit UrgentOpened(
             id,
             msg.sender,
+            receiver,
             baseAmount,
             startRate,
             floorRate,
@@ -148,11 +157,14 @@ contract FxDutchLane {
         ) revert ExclusiveWindow(id, u.exclusiveFiller);
 
         uint256 rate = currentRate(id);
-        uint256 quoteDue = (u.baseAmount * rate) / RATE_SCALE;
+        // Rounded UP: the client's receive leg carries the dust, never the
+        // professional's.
+        uint256 quoteDue = (u.baseAmount * rate + RATE_SCALE - 1) / RATE_SCALE;
 
         u.filled = true;
 
-        QUOTE.settlementTransfer(msg.sender, u.seller, quoteDue);
+        address dest = u.receiver == address(0) ? u.seller : u.receiver;
+        QUOTE.settlementTransfer(msg.sender, dest, quoteDue);
         BASE.settlementTransfer(u.seller, msg.sender, u.baseAmount);
 
         emit UrgentFilled(id, msg.sender, rate, quoteDue);

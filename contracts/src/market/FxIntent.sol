@@ -29,8 +29,16 @@ contract FxIntent {
     SettlementToken public immutable BASE;
     SettlementToken public immutable QUOTE;
 
+    /// @dev The zero address in `receiver` means "pay the owner" — the same
+    ///      sentinel convention as GPv2's RECEIVER_SAME_AS_OWNER, adopted
+    ///      because it keeps the common case free and makes third-party
+    ///      delivery a property of the signed-at-post order, not a separate
+    ///      instruction that can drift from it.
+    address public constant RECEIVER_SAME_AS_OWNER = address(0);
+
     struct Intent {
-        address owner; // sells BASE, receives QUOTE
+        address owner; // sells BASE
+        address receiver; // QUOTE proceeds go here; zero = the owner
         uint256 baseAmount;
         uint256 limitRate; // minimum QUOTE per BASE the owner accepts
         uint64 expiry;
@@ -41,7 +49,12 @@ contract FxIntent {
     mapping(bytes32 id => Intent) public intents;
 
     event IntentPosted(
-        bytes32 indexed id, address indexed owner, uint256 baseAmount, uint256 limitRate, uint64 expiry
+        bytes32 indexed id,
+        address indexed owner,
+        address receiver,
+        uint256 baseAmount,
+        uint256 limitRate,
+        uint64 expiry
     );
     event IntentFilled(bytes32 indexed id, address indexed filler, uint256 rate, uint256 quotePaid);
     event IntentCancelled(bytes32 indexed id);
@@ -60,20 +73,27 @@ contract FxIntent {
         QUOTE = quote;
     }
 
-    /// @notice Posts an intent for the caller's own account.
-    function post(bytes32 id, uint256 baseAmount, uint256 limitRate, uint64 expiry) external {
+    /// @notice Posts an intent for the caller's own account. `receiver` is
+    ///         where the QUOTE proceeds are delivered — a named beneficiary
+    ///         makes convert-and-deliver one atomic settlement; zero means
+    ///         the owner. The receiver passes the QUOTE currency's own
+    ///         admission gate at fill time, like any other recipient.
+    function post(bytes32 id, uint256 baseAmount, uint256 limitRate, uint64 expiry, address receiver)
+        external
+    {
         if (intents[id].owner != address(0)) revert DuplicateId(id);
         if (baseAmount == 0 || limitRate == 0) revert ZeroAmount();
         if (expiry <= block.timestamp) revert BadExpiry();
         intents[id] = Intent({
             owner: msg.sender,
+            receiver: receiver,
             baseAmount: baseAmount,
             limitRate: limitRate,
             expiry: expiry,
             filled: false,
             cancelled: false
         });
-        emit IntentPosted(id, msg.sender, baseAmount, limitRate, expiry);
+        emit IntentPosted(id, msg.sender, receiver, baseAmount, limitRate, expiry);
     }
 
     /// @notice Fills the whole intent at `rate`, which must meet the limit.
@@ -86,10 +106,13 @@ contract FxIntent {
         if (block.timestamp > it.expiry) revert Expired(id, it.expiry);
         if (rate < it.limitRate) revert BelowLimit(id, rate, it.limitRate);
 
-        uint256 quoteDue = (it.baseAmount * rate) / RATE_SCALE;
+        // Rounded UP: the client's receive leg carries the dust, never the
+        // professional's. One raw unit, and a stance.
+        uint256 quoteDue = (it.baseAmount * rate + RATE_SCALE - 1) / RATE_SCALE;
         it.filled = true;
 
-        QUOTE.settlementTransfer(msg.sender, it.owner, quoteDue);
+        address dest = it.receiver == RECEIVER_SAME_AS_OWNER ? it.owner : it.receiver;
+        QUOTE.settlementTransfer(msg.sender, dest, quoteDue);
         BASE.settlementTransfer(it.owner, msg.sender, it.baseAmount);
 
         emit IntentFilled(id, msg.sender, rate, quoteDue);

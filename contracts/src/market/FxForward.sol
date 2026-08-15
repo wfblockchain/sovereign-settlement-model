@@ -77,6 +77,13 @@ contract FxForward {
     mapping(bytes32 id => Forward) public forwards;
     mapping(bytes32 id => SwapTerms) public swaps;
 
+    /// @notice Where each party's INCOMING leg is delivered at settlement.
+    ///         Zero (the default) means the party itself. A value-date
+    ///         payment usually has a beneficiary; naming it here makes
+    ///         settle-and-deliver one atomic transaction instead of a
+    ///         settlement followed by an onward transfer.
+    mapping(bytes32 id => mapping(address party => address deliverTo)) public deliverTo;
+
     event ForwardProposed(
         bytes32 indexed id,
         address indexed proposer,
@@ -88,6 +95,7 @@ contract FxForward {
         uint64 lapse
     );
     event ForwardBound(bytes32 indexed id);
+    event DeliveryAddressSet(bytes32 indexed id, address indexed party, address deliverTo);
     event ForwardSettled(bytes32 indexed id, uint256 baseAmount, uint256 quoteAmount);
     event CancelRequested(bytes32 indexed id, address indexed by);
     event ForwardCancelled(bytes32 indexed id);
@@ -159,6 +167,19 @@ contract FxForward {
         emit ForwardBound(id);
     }
 
+    /// @notice A party designates where its incoming leg is delivered at
+    ///         settlement — while the trade is live, any number of times,
+    ///         zero to reset to itself. The designated address passes the
+    ///         delivering currency's own admission gate at settlement, like
+    ///         any other recipient.
+    function setDeliveryAddress(bytes32 id, address to) external {
+        Forward storage f = forwards[id];
+        if (f.status != Status.Proposed && f.status != Status.Bound) revert NotBound(id, f.status);
+        if (msg.sender != f.basePayer && msg.sender != f.quotePayer) revert NotAParty(id, msg.sender);
+        deliverTo[id][msg.sender] = to;
+        emit DeliveryAddressSet(id, msg.sender, to);
+    }
+
     /// @notice Physical settlement: BOTH principals exchange in one
     ///         transaction, on or after the value date, triggered by either
     ///         party. Each currency's admission gates, freezes and accrual
@@ -172,10 +193,16 @@ contract FxForward {
 
         f.status = Status.Settled;
 
-        BASE.settlementTransfer(f.basePayer, f.quotePayer, f.baseAmount);
-        QUOTE.settlementTransfer(f.quotePayer, f.basePayer, f.quoteAmount);
+        BASE.settlementTransfer(f.basePayer, _dest(id, f.quotePayer), f.baseAmount);
+        QUOTE.settlementTransfer(f.quotePayer, _dest(id, f.basePayer), f.quoteAmount);
 
         emit ForwardSettled(id, f.baseAmount, f.quoteAmount);
+    }
+
+    /// @dev The party's designated delivery address, defaulting to itself.
+    function _dest(bytes32 id, address party) private view returns (address) {
+        address to = deliverTo[id][party];
+        return to == address(0) ? party : to;
     }
 
     /// @notice Cancellation in two regimes, plus lapse.
