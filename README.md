@@ -87,6 +87,17 @@ Choosing which obligations to settle is a search problem and runs off-chain
 rejects anything that does not follow from them. A compromised optimiser cannot
 move value the obligations do not imply.
 
+`NettingPlanBook` removes the remaining monopoly — *who proposes the plan*.
+A selection window opens per cycle (measured in blocks, not seconds — a
+timestamp is the producer's to shade); any solver submits a plan, which is
+verified at submission exactly as the engine verifies it at settlement; the
+plan discharging the most gross value leads, and once the window closes
+anyone may execute the winner through the engine. A sole optimiser was never
+a correctness risk — the engine checks the math — but it was an *optimality*
+monopoly: if it found 24:1 where 29:1 existed, nobody could prove value was
+left on the table. Competing solvers make the search adversarial, and the
+winning score is a public record of the best plan anyone could find.
+
 Mechanisms 2 and 3 in one trace:
 
 ```mermaid
@@ -182,6 +193,17 @@ first look (the RFQ hybrid) before the public decay disciplines its
 quote. No operator exists in this lane: any member opens for itself, any
 member fills.
 
+**The client-order primitive is an intent** (`FxIntent`): a client posts
+constraints — amount, limit rate, expiry — and any admitted filler executes
+within them. Nothing moves until a filler satisfies the constraints in full
+and atomically, a fill below the limit cannot exist, and a fill above it
+pays its surplus to the client — the floor is law, competition sets the
+rest. This is the enabling primitive of the long-tail hedging channel: a
+per-invoice hedge is one posted intent, not a phone call, and a standing
+treasury policy is a stream of them. The production path adds Permit2-style
+off-chain signatures and the ERC-7683 order shape; the constraint semantics
+are this contract's.
+
 Known limit, stated plainly: no variation margin — between bind and
 settlement the parties carry replacement-cost exposure, as in any
 uncollateralized bilateral forward. Production wants VM posted in the
@@ -228,15 +250,22 @@ Obligations queue and offset; only residuals fund. Measured ~9:1 here at
 batch cycles; the production ceiling is CHIPS-like 29:1. The single biggest
 lever, and the reason the pool is sized to residuals rather than peaks.
 
-**2. Idle-balance intermediation** *(design — the `IntradayLiquidityPool`
-extension).* Cash-rich members deposit spare M0 single-sided; a short member
-draws against tokenized collateral at a haircut, intraday, at a
-utilization-curve rate, and repays from incoming flows. A payment may be
+**2. Idle-balance intermediation** *(implemented —
+`IntradayLiquidityPool`).* Cash-rich members deposit spare M0 single-sided
+into a native **ERC-4626** vault — standard shares any allocator can read,
+but membership-gated, because a pool receipt is not a bearer asset. A short
+member draws against registered tokenized collateral at a haircut, intraday,
+at a kinked utilization-curve rate fixed at draw time — governance sets the
+curve, nobody sets prices — and repays from incoming flows. A payment may be
 funded part own-balance, part draw — a daylight overdraft with a down
-payment. Total M0 is conserved: the pool reallocates existing balances, so
-this is the *intermediation* half of fractional reserve with the *creation*
-half amputated. Its limit is honest: total draws ≤ pool deposits, so it
-needs the next layer behind it.
+payment. Total M0 is conserved (pinned by test): the pool reallocates
+existing balances, so this is the *intermediation* half of fractional
+reserve with the *creation* half amputated. A draw that outlives the
+operational day accrues at a penalty multiple; past a grace window anyone
+may seize its collateral for the pool, and any shortfall lands on LP share
+price — the members priced the risk, the operator never carries it. Its
+limit is honest: total draws ≤ pool deposits, so it needs the next layer
+behind it.
 
 **3. Elastic backing** *(design — `fundInKind`/`defundInKind` on the
 token).* When the whole system is short, supply itself breathes — against
@@ -274,7 +303,7 @@ paid-for right.
 ```mermaid
 flowchart TB
     D["settlement demand<br/>peak gross: 3.0bn"] -->|"most payments offset"| N["netting<br/>(implemented)"]
-    N -->|"residual positions ~400m"| P["idle-balance pool<br/>borrow existing M0 vs collateral"]
+    N -->|"residual positions ~400m"| P["idle-balance pool<br/>(implemented)<br/>borrow existing M0 vs collateral"]
     P -->|"unmet timing gap ~250m"| E["elastic backing<br/>mint vs Treasuries, burn on unwind"]
     E -->|"stress tail"| C["committed standby lines<br/>priced, not prefunded"]
     C --> F["parked-cash floor ~100m<br/>earning the accrual index"]
@@ -432,13 +461,16 @@ repository splits.
 |---|---|
 | `contracts/src/clearing/SettlementToken.sol` | Par token, ERC-7943 (uRWA) gate/freeze/force, accrual index, key-loss recovery |
 | `contracts/src/clearing/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
+| `contracts/src/clearing/NettingPlanBook.sol` | Solver competition for netting plans: verified at submission, highest discharged value leads, anyone executes the winner |
+| `contracts/src/clearing/IntradayLiquidityPool.sol` | Elasticity layer 2: ERC-4626 idle-balance pool — membership-gated shares, collateralized intraday draws, kinked utilization pricing, seize and write off |
 | `contracts/src/clearing/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
 | `contracts/src/market/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
 | `contracts/src/market/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
 | `contracts/src/market/FxDutchLane.sol` | Urgent conversions by declining-price auction: block-height decay, bounded floor, optional exclusive first look |
+| `contracts/src/market/FxIntent.sol` | Client orders as constraints: limit-floored whole-order fills, surplus to the client, nothing moves until a valid fill |
 | `contracts/src/clearing/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
 | `contracts/src/clearing/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
-| `contracts/test/` | 71 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, the derivatives layer and the urgent lane (block-height decay, exclusivity window) |
+| `contracts/test/` | 104 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, the derivatives layer, the urgent and intent lanes, the liquidity pool's conservation and loss-bearing, and the solver competition |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
@@ -595,9 +627,12 @@ system with its invariants pinned by tests.
   mid (upstream of the auction) needs a rate source with the same
   "verified, not trusted" treatment as the optimiser — e.g. a bounded median
   of member submissions — which this repo does not implement.
-- **Elasticity beyond netting is specified, not implemented**: the
-  idle-balance pool, elastic backing and committed-line registry above are
-  design mechanisms with stated invariants; only netting ships in this repo.
+- **Elasticity beyond netting and the pool is specified, not implemented**:
+  elastic backing (`fundInKind`) and the committed-line registry above are
+  design mechanisms with stated invariants; netting and the idle-balance
+  pool ship in this repo. And the pool's own limit is stated in its tests:
+  seized collateral is recovery held as a token — converting it back to M0
+  happens off the pool's books, via DvP.
 - **A 24×7 token redeems into banking-hours money**: `defund` promises fiat and
   Fedwire closes. Redemption windows or an intraday facility are a policy
   choice the contracts do not make.
