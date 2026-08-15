@@ -171,6 +171,17 @@ not implemented.
   carry travels through the indices (covered interest parity, mechanical),
   pinned by test.
 
+**The urgent lane is a declining-price auction** (`FxDutchLane`): an
+urgent seller opens an order whose rate decays from a seller-favorable
+start toward a chosen floor — by **block height, never timestamp** (a
+producer can shade timestamps; block numbers it cannot) — and the first
+admitted filler to accept wins both legs atomically at the current rate.
+Immediacy is priced by open competition with worst-case slippage bounded
+by the floor; an optional exclusivity window gives one filler a brief
+first look (the RFQ hybrid) before the public decay disciplines its
+quote. No operator exists in this lane: any member opens for itself, any
+member fills.
+
 Known limit, stated plainly: no variation margin — between bind and
 settlement the parties carry replacement-cost exposure, as in any
 uncollateralized bilateral forward. Production wants VM posted in the
@@ -424,9 +435,10 @@ repository splits.
 | `contracts/src/clearing/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
 | `contracts/src/market/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
 | `contracts/src/market/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
+| `contracts/src/market/FxDutchLane.sol` | Urgent conversions by declining-price auction: block-height decay, bounded floor, optional exclusive first look |
 | `contracts/src/clearing/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
 | `contracts/src/clearing/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
-| `contracts/test/` | 62 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, and the derivatives layer (physical-settlement-only, carry-through-indices) |
+| `contracts/test/` | 71 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, the derivatives layer and the urgent lane (block-height decay, exclusivity window) |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |
 
