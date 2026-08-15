@@ -5,9 +5,9 @@ import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SettlementToken, IParticipantRegistry, IERC7943Fungible
-} from "src/SettlementToken.sol";
-import { NettingEngine } from "src/NettingEngine.sol";
-import { AtomicDvP } from "src/AtomicDvP.sol";
+} from "src/clearing/SettlementToken.sol";
+import { NettingEngine } from "src/clearing/NettingEngine.sol";
+import { AtomicDvP } from "src/clearing/AtomicDvP.sol";
 import { MockERC20BurnMint } from "./utils/MockERC20.sol";
 
 /// @dev Stand-in for a production admission registry. The signature matches the

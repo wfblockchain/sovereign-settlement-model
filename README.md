@@ -393,17 +393,39 @@ flowchart TB
     end
 ```
 
+## Two concepts, one seam
+
+The source tree separates two different things that depend on each other,
+so a reader is never confused about which is which:
+
+- **`contracts/src/clearing/`** — the money: the settlement token, the
+  netting engine, DvP settlement, the deposit tier and the conversion
+  bridge. **No rate object exists anywhere in this directory** — nothing
+  here can price.
+- **`contracts/src/market/`** — the pricing: the residual auction and the
+  physically-settled forwards/swaps. **Nothing here holds custody or mints**
+  — no money is created on this side.
+
+The only coupling is the `SETTLEMENT_ROLE` grant: market contracts settle
+*through* the clearing layer, through the same governed gate as any other
+settling contract. The seam tests (two-token PvP, freeze-stops-the-batch,
+carry-through-indices) deliberately live in one suite so the boundary is
+continuously proven, not assumed. If the two layers ever diverge in
+governance — separate operators, separate auditors, production hardening,
+or an external adopter of one side — the directory boundary is where the
+repository splits.
+
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `contracts/src/SettlementToken.sol` | Par token, ERC-7943 (uRWA) gate/freeze/force, accrual index, key-loss recovery |
-| `contracts/src/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
-| `contracts/src/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
-| `contracts/src/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
-| `contracts/src/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
-| `contracts/src/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
-| `contracts/src/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
+| `contracts/src/clearing/SettlementToken.sol` | Par token, ERC-7943 (uRWA) gate/freeze/force, accrual index, key-loss recovery |
+| `contracts/src/clearing/NettingEngine.sol` | Obligation queue, verified net-settlement cycles, gross escape hatch |
+| `contracts/src/clearing/AtomicDvP.sol` | Same-ledger asset-vs-cash, both legs or neither; offers revoke unilaterally, bound trades cancel only bilaterally |
+| `contracts/src/market/FxBatchAuction.sol` | Cross-currency residual auction: sealed bids, uniform price, operator-verified fill order, PvP settlement |
+| `contracts/src/market/FxForward.sol` | Physically-settled FX forwards and spot-start swaps; no oracle, no fixing, no cash-settlement path |
+| `contracts/src/clearing/DepositToken.sol` | One bank's M2: deposits in/out, customer gates, bank compliance, deposit interest via the accrual index — no backing invariant, by design |
+| `contracts/src/clearing/ConversionBridge.sol` | The two-tier seam: burn at A → settle A→B → mint at B, atomic, rate-free, triggered by the sending bank |
 | `contracts/test/` | 62 Foundry tests pinning the invariants, incl. audit regressions, the conversion seam, and the derivatives layer (physical-settlement-only, carry-through-indices) |
 | `internal/clearing/` | Multilateral netting + gridlock resolution (feasible, deterministic plans) and the economics simulation |
 | `cmd/clearing-operator/` | Prints the economics tables: efficiency and funding vs cycle size, accrual vs pool location |

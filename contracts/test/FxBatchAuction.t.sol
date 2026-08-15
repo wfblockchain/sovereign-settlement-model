@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SettlementToken, IERC7943Fungible } from "src/SettlementToken.sol";
-import { AtomicDvP } from "src/AtomicDvP.sol";
-import { FxBatchAuction } from "src/FxBatchAuction.sol";
+import { SettlementToken, IERC7943Fungible } from "src/clearing/SettlementToken.sol";
+import { AtomicDvP } from "src/clearing/AtomicDvP.sol";
+import { FxBatchAuction } from "src/market/FxBatchAuction.sol";
 import { MockRegistry } from "./ClearingModel.t.sol";
 
 /// @dev The cross-currency layer: the residual auction (sealed bids, uniform

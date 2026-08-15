@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { SettlementToken } from "./SettlementToken.sol";
+import { SettlementToken } from "../clearing/SettlementToken.sol";
 
 /// @title FxForward — physically-settled FX forwards and swaps on two settlement tokens
 /// @notice The derivatives layer's exempt core: outright forwards and FX swaps

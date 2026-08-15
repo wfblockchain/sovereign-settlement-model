@@ -2,9 +2,9 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
-import { SettlementToken, IERC7943Fungible } from "src/SettlementToken.sol";
-import { DepositToken } from "src/DepositToken.sol";
-import { ConversionBridge } from "src/ConversionBridge.sol";
+import { SettlementToken, IERC7943Fungible } from "src/clearing/SettlementToken.sol";
+import { DepositToken } from "src/clearing/DepositToken.sol";
+import { ConversionBridge } from "src/clearing/ConversionBridge.sol";
 import { MockRegistry } from "./ClearingModel.t.sol";
 
 /// @dev The two-tier seam: per-bank deposit tokens (M2) and the atomic

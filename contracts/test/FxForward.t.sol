@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
-import { SettlementToken, IERC7943Fungible } from "src/SettlementToken.sol";
-import { FxForward } from "src/FxForward.sol";
+import { SettlementToken, IERC7943Fungible } from "src/clearing/SettlementToken.sol";
+import { FxForward } from "src/market/FxForward.sol";
 import { MockRegistry } from "./ClearingModel.t.sol";
 
 /// @dev The derivatives layer's exempt core: physically-settled forwards and

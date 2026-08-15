@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
-import { SettlementToken } from "./SettlementToken.sol";
+import { SettlementToken } from "../clearing/SettlementToken.sol";
 
 /// @title FxBatchAuction — the conversion layer's residual auction
 /// @notice Sells a fixed amount of the BASE settlement token for the QUOTE
